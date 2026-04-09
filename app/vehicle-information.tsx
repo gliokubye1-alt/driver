@@ -193,26 +193,32 @@ export default function VehicleInformation() {
   useEffect(() => {
     const loadBrandsFromFirestore = async () => {
       setIsLoadingBrands(true);
-      
+
       try {
         const uid = auth.currentUser?.uid || registrationData.uid;
-        
+
         // Step 1: Get vehicleCategory - first try context, then fetch from Firestore
         let vehicleCategory = registrationData.vehicleCategory;
-        
+
         if (!vehicleCategory && uid) {
           console.log('[v0] No category in context, fetching from Firestore...');
           const driverRef = doc(firestore, 'drivers', uid);
           const driverSnap = await getDoc(driverRef);
-          
+
           if (driverSnap.exists()) {
-            vehicleCategory = driverSnap.data()?.vehicle?.vehicleCategory;
+            const driverDocData = driverSnap.data();
+            // Check vehicle.vehicleCategory first (correct structure), then root-level fallback
+            vehicleCategory =
+              driverDocData?.vehicle?.vehicleCategory ||
+              driverDocData?.vehicleCategory;
             console.log('[v0] Loaded vehicleCategory from Firestore:', vehicleCategory);
           }
         }
-        
+
+        console.log('[v0] Vehicle category used for query:', vehicleCategory);
+
         if (!vehicleCategory) {
-          console.log('[v0] No vehicle category found');
+          console.log('[v0] No vehicle category found - cannot query vehicles_master');
           setIsLoadingBrands(false);
           return;
         }
@@ -347,17 +353,17 @@ export default function VehicleInformation() {
     loadServiceRules();
   }, [selectedBrand, vehicleData.model]);
 
-  const setDefaultServiceOptions = () => {
-    const category = registrationData.vehicleCategory;
-    if (category === 'car' || category === 'motorbike') {
+  const setDefaultServiceOptions = (category?: string) => {
+    const cat = category || registrationData.vehicleCategory;
+    if (cat === 'car' || cat === 'motorbike') {
       setAvailableServices(['ride', 'delivery', 'courier', 'towing']);
       setAvailableCargoTypes([]);
       setAvailableTonnageOptions([]);
-    } else if (category === 'truck') {
+    } else if (cat === 'truck') {
       setAvailableServices(['delivery', 'courier', 'moving']);
       setAvailableCargoTypes(['general', 'fragile', 'perishable', 'hazardous']);
       setAvailableTonnageOptions(['1 ton', '2 tons', '3 tons', '4 tons', '5 tons', '8 tons', '10 tons']);
-    } else if (category === 'minibus') {
+    } else if (cat === 'minibus') {
       setAvailableServices(['ride', 'charter']);
       setAvailableCargoTypes([]);
       setAvailableTonnageOptions([]);
@@ -505,7 +511,21 @@ const classifyVehicle = (category: string | undefined) => {
       return;
     }
 
-    const classification = classifyVehicle(registrationData.vehicleCategory);
+    // Resolve vehicleCategory with fallback from Firestore
+    let resolvedCategory = registrationData.vehicleCategory;
+    const driverRef = doc(firestore, 'drivers', uid);
+
+    if (!resolvedCategory) {
+      const driverSnap = await getDoc(driverRef);
+      if (driverSnap.exists()) {
+        const docData = driverSnap.data();
+        resolvedCategory =
+          docData?.vehicle?.vehicleCategory ||
+          docData?.vehicleCategory;
+      }
+    }
+
+    const classification = classifyVehicle(resolvedCategory);
 
     try {
       setIsUploading(true);
@@ -516,7 +536,6 @@ const classifyVehicle = (category: string | undefined) => {
       let vehicleRegistrationUrl = '';
 
       if (vehicleData.vehiclePicture) {
-        // Convert image URI to base64 for upload
         const response = await fetch(vehicleData.vehiclePicture);
         const blob = await response.blob();
         const base64 = await new Promise<string>((resolve) => {
@@ -559,21 +578,20 @@ const classifyVehicle = (category: string | undefined) => {
       }
 
       // Update Firestore with vehicle data and Cloudinary URLs
-      const driverRef = doc(firestore, 'drivers', uid);
-const vehicleUpdateData: any = {
-  'vehicle.brand': vehicleData.brand,
-  'vehicle.model': vehicleData.model,
-  'vehicle.color': vehicleData.color,
-  'vehicle.productionYear': vehicleData.productionYear,
-  'vehicle.plateNumber': vehicleData.numberPlate.trim(),
-  'vehicle.type': classification,
-  'vehicle.vehicleCategory': registrationData.vehicleCategory || '',
-  'vehicle.carImage': vehiclePictureUrl,
-  'vehicle.vehicleLicense': vehicleLicenseUrl,
-  'vehicle.registrationCertificate': vehicleRegistrationUrl,
-  registrationStep: 6,
-  updatedAt: serverTimestamp(),
-  };
+      const vehicleUpdateData: any = {
+        'vehicle.brand': vehicleData.brand,
+        'vehicle.model': vehicleData.model,
+        'vehicle.color': vehicleData.color,
+        'vehicle.productionYear': vehicleData.productionYear,
+        'vehicle.plateNumber': vehicleData.numberPlate.trim(),
+        'vehicle.type': classification,
+        'vehicle.vehicleCategory': resolvedCategory || '',
+        'vehicle.carImage': vehiclePictureUrl,
+        'vehicle.vehicleLicense': vehicleLicenseUrl,
+        'vehicle.registrationCertificate': vehicleRegistrationUrl,
+        registrationStep: 6,
+        updatedAt: serverTimestamp(),
+      };
   
   // Add services if applicable
   if (shouldShowServices() && vehicleData.services && vehicleData.services.length > 0) {

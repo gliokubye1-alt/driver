@@ -98,7 +98,7 @@ export default function RidesDelivery() {
     }
 
     try {
-      // Update driver document with role and vehicle category
+      // Update driver document with role and vehicle category stored under vehicle map
       await updateDriverData(
         uid,
         {
